@@ -13,32 +13,6 @@ import (
 	"time"
 )
 
-//type Request struct {
-//	Url         UrlType
-//	Method      string
-//	Headers     map[string]string
-//	ContentType string
-//	Body        []byte
-//}
-//
-//type Response struct {
-//	Url         UrlType
-//	Status      int
-//	Body        []byte
-//	Headers     map[string]string
-//	ContentType string
-//}
-//
-//type UrlType struct {
-//	Scheme   string
-//	Domain   string
-//	Host     string
-//	Port     string
-//	Path     string
-//	Query    string
-//	Fragment string
-//}
-
 var (
 	client           *http.Client
 	clientNoRedirect *http.Client
@@ -50,8 +24,8 @@ func InitHttpClient(ThreadsNum int, DownProxy string, Timeout time.Duration) err
 		MaxIdleConnsPerHost: ThreadsNum * 2,
 		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
 		DialContext: (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
+			Timeout:   15 * time.Second,
+			KeepAlive: 15 * time.Second,
 		}).DialContext,
 	}
 	if DownProxy != "" {

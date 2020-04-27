@@ -1,5 +1,7 @@
 name: poc-yaml-example-com
 set:
+  r1: randomInt(40000, 44800)
+  r2: randomInt(40000, 44800)
   referer: request.url
   host: request.url.host
   fileName: randomLowercase(4) + ".txt"

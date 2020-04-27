@@ -2,30 +2,125 @@ package lib
 
 import (
 	"fmt"
+	"gopoc/utils"
 	"net/http"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 )
 
-func Check(oReq *http.Request, p *Poc) (bool, error) {
+type Task struct {
+	Req *http.Request
+	Poc *Poc
+}
+
+func do(tasks []Task, num int) <-chan Task {
+	var wg sync.WaitGroup
+	results := make(chan Task)
+	limit := make(chan struct{}, num)
+	for _, task := range tasks {
+		wg.Add(1)
+		limit <- struct{}{}
+		go func(task Task) {
+			<-limit
+			defer wg.Done()
+			isVul, err := checkPoc(task.Req, task.Poc)
+			if err != nil {
+				utils.Error(err)
+				return
+			}
+			if isVul {
+				//utils.GoodF("%v, %s", task.Target, task.Poc.Name)
+				results <- task
+			}
+		}(task)
+	}
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+	return results
+}
+
+func BatchCheckSinglePoc(targets []string, pocName string, num int) {
+	if p, err := LoadSinglePoc(pocName); err == nil {
+		var tasks []Task
+		for _, target := range targets {
+			req, _ := http.NewRequest("GET", target, nil)
+			task := Task{
+				Req: req,
+				Poc: p,
+			}
+			tasks = append(tasks, task)
+		}
+		for result := range do(tasks, num) {
+			fmt.Println(result.Req.URL, result.Poc.Name)
+		}
+	}
+}
+
+func BatchCheckMultiPoc(targets []string, pocName string, num int) {
+	pocs := LoadMultiPoc(pocName)
+	var tasks []Task
+	for _, target := range targets {
+		req, _ := http.NewRequest("GET", target, nil)
+		for _, poc := range pocs {
+			task := Task{
+				Req: req,
+				Poc: poc,
+			}
+			tasks = append(tasks, task)
+		}
+	}
+	for result := range do(tasks, num) {
+		utils.Green("%s %s", result.Req.URL, result.Poc.Name)
+	}
+}
+
+func CheckSinglePoc(req *http.Request, pocName string) *Poc {
+	if p, err := LoadSinglePoc(pocName); err == nil {
+		if isVul, err := checkPoc(req, p); err == nil {
+			if isVul {
+				return p
+			}
+		}
+	}
+	return nil
+}
+
+func CheckMultiPoc(req *http.Request, pocName string, num int) {
+	var tasks []Task
+	for _, poc := range LoadMultiPoc(pocName) {
+		task := Task{
+			Req: req,
+			Poc: poc,
+		}
+		tasks = append(tasks, task)
+	}
+	for result := range do(tasks, num) {
+		utils.Green("%s %s", result.Req.URL, result.Poc.Name)
+	}
+}
+
+func checkPoc(oReq *http.Request, p *Poc) (bool, error) {
+	utils.Debug(oReq.URL.String(), p.Name)
 	c := NewEnvOption()
 	c.UpdateCompileOptions(p.Set)
 	env, err := NewEnv(&c)
 	if err != nil {
-		fmt.Printf("environment creation error: %s\n", err)
+		utils.ErrorF("environment creation error: %s\n", err)
 		return false, err
 	}
 	variableMap := make(map[string]interface{})
 	req, err := ParseRequest(oReq)
 	if err != nil {
-		fmt.Println(err)
+		utils.Error(err)
 		return false, err
 	}
 	variableMap["request"] = req
-	//variableMap := parseRequest(req)
 
-	// 现在假定set中payload是最后产出，那么先排序解析其他的自定义变量，更新map[string]interface{}后再来解析payload
+	// 现在假定set中payload作为最后产出，那么先排序解析其他的自定义变量，更新map[string]interface{}后再来解析payload
 	newSet := make(map[string]string)
 	keys := make([]string, 0)
 	for k := range p.Set {
@@ -35,19 +130,23 @@ func Check(oReq *http.Request, p *Poc) (bool, error) {
 	for _, k := range keys {
 		newSet[k] = p.Set[k]
 	}
-	for k, v := range newSet {
+	for k, expression := range newSet {
 		if k != "payload" {
-			out, err := Calculate(env, v, variableMap)
+			out, err := Calculate(env, expression, variableMap)
 			if err != nil {
 				continue
 			}
-			if u, ok := out.Value().(*UrlType); ok {
-				variableMap[k] = ParseUrlType(u)
-				continue
+			switch value := out.Value().(type) {
+			case *UrlType:
+				variableMap[k] = ParseUrlType(value)
+			case int64:
+				variableMap[k] = int(value)
+			default:
+				variableMap[k] = fmt.Sprintf("%v", out)
 			}
-			variableMap[k] = fmt.Sprintf("%v", out)
 		}
 	}
+
 	if p.Set["payload"] != "" {
 		out, err := Calculate(env, p.Set["payload"], variableMap)
 		if err != nil {
@@ -71,11 +170,17 @@ func Check(oReq *http.Request, p *Poc) (bool, error) {
 			rule.Body = strings.ReplaceAll(strings.TrimSpace(rule.Body), "{{"+k1+"}}", value)
 		}
 
-		req, _ := http.NewRequest(rule.Method, fmt.Sprintf("%s://%s%s", req.Url.Scheme, req.Url.Host, rule.Path), strings.NewReader(rule.Body))
-		for k, v := range rule.Headers {
-			req.Header.Set(k, v)
+		if oReq.URL.Path != "" && oReq.URL.Path != "/" {
+			req.Url.Path = fmt.Sprint(oReq.URL.Path, rule.Path)
+		} else {
+			req.Url.Path = rule.Path
 		}
-		resp, err := DoRequest(req, rule.FollowRedirects)
+		newRequest, _ := http.NewRequest(rule.Method, fmt.Sprintf("%s://%s%s", req.Url.Scheme, req.Url.Host, req.Url.Path), strings.NewReader(rule.Body))
+		newRequest.Header = oReq.Header.Clone()
+		for k, v := range rule.Headers {
+			newRequest.Header.Set(k, v)
+		}
+		resp, err := DoRequest(newRequest, rule.FollowRedirects)
 		if err != nil {
 			return false, err
 		}

@@ -11,7 +11,7 @@ import (
 	"github.com/google/cel-go/common/types/ref"
 	"github.com/google/cel-go/interpreter/functions"
 	exprpb "google.golang.org/genproto/googleapis/api/expr/v1alpha1"
-	"log"
+	"gopoc/utils"
 	"math/rand"
 	"net/url"
 	"regexp"
@@ -30,19 +30,19 @@ func NewEnv(c *CustomLib) (*cel.Env, error) {
 func Calculate(env *cel.Env, expression string, params map[string]interface{}) (ref.Val, error) {
 	ast, iss := env.Compile(expression)
 	if iss.Err() != nil {
-		log.Println(iss.Err())
+		utils.Error(iss.Err())
 		return nil, iss.Err()
 	}
 
 	prg, err := env.Program(ast)
 	if err != nil {
-		log.Printf("Program creation error: %v\n", err)
+		utils.ErrorF("Program creation error: %v", err)
 		return nil, err
 	}
 
 	out, _, err := prg.Eval(params)
 	if err != nil {
-		log.Printf("Evaluation error: %v\n", err)
+		utils.ErrorF("Evaluation error: %v", err)
 		return nil, err
 	}
 	return out, nil
@@ -104,37 +104,13 @@ func NewEnvOption() CustomLib {
 			decls.NewIdent("response", decls.NewObjectType("lib.Response"), nil),
 		),
 		cel.Declarations(
-			// request
-			//decls.NewIdent("request.url.scheme", decls.String, nil),
-			//decls.NewIdent("request.url.domain", decls.String, nil),
-			//decls.NewIdent("request.url.host", decls.String, nil),
-			//decls.NewIdent("request.url.port", decls.String, nil),
-			//decls.NewIdent("request.url.path", decls.String, nil),
-			//decls.NewIdent("request.url.query", decls.String, nil),
-			//decls.NewIdent("request.url.fragment", decls.String, nil),
-			//decls.NewIdent("request.method", decls.String, nil),
-			//decls.NewIdent("request.headers", decls.NewMapType(decls.String, decls.String), nil),
-			//decls.NewIdent("request.content_type", decls.String, nil),
-			//decls.NewIdent("request.body", decls.Bytes, nil),
-			//// response
-			//decls.NewIdent("response.url.scheme", decls.String, nil),
-			//decls.NewIdent("response.url.domain", decls.String, nil),
-			//decls.NewIdent("response.url.host", decls.String, nil),
-			//decls.NewIdent("response.url.port", decls.String, nil),
-			//decls.NewIdent("response.url.path", decls.String, nil),
-			//decls.NewIdent("response.url.query", decls.String, nil),
-			//decls.NewIdent("response.url.fragment", decls.String, nil),
-			//decls.NewIdent("response.status", decls.Int, nil),
-			//decls.NewIdent("response.headers", decls.NewMapType(decls.String, decls.String), nil),
-			//decls.NewIdent("response.content_type", decls.String, nil),
-			//decls.NewIdent("response.body", decls.Bytes, nil),
 			// functions
 			decls.NewFunction("bcontains",
 				decls.NewInstanceOverload("bytes_bcontains_bytes",
 					[]*exprpb.Type{decls.Bytes, decls.Bytes},
 					decls.Bool)),
-			decls.NewFunction("bmatchs",
-				decls.NewInstanceOverload("string_bmatchs_bytes",
+			decls.NewFunction("bmatches",
+				decls.NewInstanceOverload("string_bmatches_bytes",
 					[]*exprpb.Type{decls.String, decls.Bytes},
 					decls.Bool)),
 			decls.NewFunction("md5",
@@ -240,15 +216,16 @@ func NewEnvOption() CustomLib {
 			&functions.Overload{
 				Operator: "randomInt_int_int",
 				Binary: func(lhs ref.Val, rhs ref.Val) ref.Val {
-					to, ok := lhs.(types.Int)
+					from, ok := lhs.(types.Int)
 					if !ok {
 						return types.ValOrErr(lhs, "unexpected type '%v' passed to randomInt", lhs.Type())
 					}
-					from, ok := rhs.(types.Int)
+					to, ok := rhs.(types.Int)
 					if !ok {
 						return types.ValOrErr(rhs, "unexpected type '%v' passed to randomInt", rhs.Type())
 					}
-					return types.Int(rand.Intn(int(to)) + int(from))
+					min, max := int(from), int(to)
+					return types.Int(rand.Intn(max-min) + min)
 				},
 			}),
 		cel.Functions(&functions.Overload{
@@ -292,7 +269,7 @@ func NewEnvOption() CustomLib {
 				if err != nil {
 					return types.NewErr("%v", err)
 				}
-				return types.String(string(decodeBytes))
+				return types.String(decodeBytes)
 			},
 		}),
 		cel.Functions(&functions.Overload{
@@ -306,7 +283,7 @@ func NewEnvOption() CustomLib {
 				if err != nil {
 					return types.NewErr("%v", err)
 				}
-				return types.String(string(decodeBytes))
+				return types.String(decodeBytes)
 			},
 		}),
 		cel.Functions(&functions.Overload{
@@ -397,15 +374,18 @@ func (c *CustomLib) ProgramOptions() []cel.ProgramOption {
 }
 
 func (c *CustomLib) UpdateCompileOptions(args map[string]string) {
-	for k := range args {
-		d := decls.NewIdent(k, decls.String, nil)
+	for k, v := range args {
+		// 在执行之前是不知道变量的类型的，所以统一声明为字符型
+		// 所以randomInt虽然返回的是int型，在运算中却被当作字符型进行计算，需要重载string_*_string
+		var d *exprpb.Decl
+		if strings.HasPrefix(v, "randomInt") {
+			d = decls.NewIdent(k, decls.Int, nil)
+		} else {
+			d = decls.NewIdent(k, decls.String, nil)
+		}
 		c.envOptions = append(c.envOptions, cel.Declarations(d))
 	}
 }
-
-//func (c *CustomLib) UpdateProgramOptions() {
-//
-//}
 
 func randomLowercase(n int) string {
 	lowercase := "abcdefghijklmnopqrstuvwxyz"
