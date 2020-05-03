@@ -29,8 +29,10 @@ type Rules struct {
 }
 
 type Detail struct {
-	Author string   `yaml:"author"`
-	Links  []string `yaml:"links"`
+	Author      string   `yaml:"author"`
+	Links       []string `yaml:"links"`
+	Description string   `yaml:"description"`
+	Version     string   `yaml:"version"`
 }
 
 func LoadSinglePoc(fileName string) (*Poc, error) {

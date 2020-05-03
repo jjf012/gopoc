@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 type Task struct {
@@ -15,23 +16,20 @@ type Task struct {
 	Poc *Poc
 }
 
-func do(tasks []Task, num int) <-chan Task {
+func checkVul(tasks []Task, ticker *time.Ticker) <-chan Task {
 	var wg sync.WaitGroup
 	results := make(chan Task)
-	limit := make(chan struct{}, num)
 	for _, task := range tasks {
 		wg.Add(1)
-		limit <- struct{}{}
 		go func(task Task) {
-			<-limit
 			defer wg.Done()
-			isVul, err := checkPoc(task.Req, task.Poc)
+			<-ticker.C
+			isVul, err := executePoc(task.Req, task.Poc)
 			if err != nil {
 				utils.Error(err)
 				return
 			}
 			if isVul {
-				//utils.GoodF("%v, %s", task.Target, task.Poc.Name)
 				results <- task
 			}
 		}(task)
@@ -43,8 +41,11 @@ func do(tasks []Task, num int) <-chan Task {
 	return results
 }
 
-func BatchCheckSinglePoc(targets []string, pocName string, num int) {
+func BatchCheckSinglePoc(targets []string, pocName string, rate int) {
 	if p, err := LoadSinglePoc(pocName); err == nil {
+		rateLimit := time.Second / time.Duration(rate)
+		ticker := time.NewTicker(rateLimit)
+		defer ticker.Stop()
 		var tasks []Task
 		for _, target := range targets {
 			req, _ := http.NewRequest("GET", target, nil)
@@ -54,33 +55,69 @@ func BatchCheckSinglePoc(targets []string, pocName string, num int) {
 			}
 			tasks = append(tasks, task)
 		}
-		for result := range do(tasks, num) {
+		for result := range checkVul(tasks, ticker) {
 			fmt.Println(result.Req.URL, result.Poc.Name)
 		}
 	}
 }
 
-func BatchCheckMultiPoc(targets []string, pocName string, num int) {
+func BatchCheckMultiPoc(targets []string, pocName string, threads, rate int) {
 	pocs := LoadMultiPoc(pocName)
-	var tasks []Task
-	for _, target := range targets {
-		req, _ := http.NewRequest("GET", target, nil)
-		for _, poc := range pocs {
-			task := Task{
-				Req: req,
-				Poc: poc,
+	rateLimit := time.Second / time.Duration(rate)
+	ticker := time.NewTicker(rateLimit)
+	defer ticker.Stop()
+
+	in := make(chan string)
+	go func() {
+		for _, target := range targets {
+			in <- target
+		}
+		close(in)
+	}()
+
+	worker := func(targets <-chan string, wg *sync.WaitGroup, retCh chan<- []Task) {
+		defer wg.Done()
+		for target := range targets {
+			var tasks []Task
+			var results []Task
+			req, _ := http.NewRequest("GET", target, nil)
+			for _, poc := range pocs {
+				task := Task{
+					Req: req,
+					Poc: poc,
+				}
+				tasks = append(tasks, task)
 			}
-			tasks = append(tasks, task)
+			for result := range checkVul(tasks, ticker) {
+				results = append(results, result)
+			}
+			retCh <- results
 		}
 	}
-	for result := range do(tasks, num) {
-		utils.Green("%s %s", result.Req.URL, result.Poc.Name)
+
+	do := func() <-chan []Task {
+		var wg sync.WaitGroup
+		retCh := make(chan []Task, threads)
+		for i := 0; i < threads; i++ {
+			wg.Add(1)
+			go worker(in, &wg, retCh)
+		}
+		go func() {
+			wg.Wait()
+			close(retCh)
+		}()
+		return retCh
+	}
+	for results := range do() {
+		for _, result := range results {
+			utils.Green("%s %s", result.Req.URL, result.Poc.Name)
+		}
 	}
 }
 
 func CheckSinglePoc(req *http.Request, pocName string) *Poc {
 	if p, err := LoadSinglePoc(pocName); err == nil {
-		if isVul, err := checkPoc(req, p); err == nil {
+		if isVul, err := executePoc(req, p); err == nil {
 			if isVul {
 				return p
 			}
@@ -89,7 +126,10 @@ func CheckSinglePoc(req *http.Request, pocName string) *Poc {
 	return nil
 }
 
-func CheckMultiPoc(req *http.Request, pocName string, num int) {
+func CheckMultiPoc(req *http.Request, pocName string, rate int) {
+	rateLimit := time.Second / time.Duration(rate)
+	ticker := time.NewTicker(rateLimit)
+	defer ticker.Stop()
 	var tasks []Task
 	for _, poc := range LoadMultiPoc(pocName) {
 		task := Task{
@@ -98,12 +138,12 @@ func CheckMultiPoc(req *http.Request, pocName string, num int) {
 		}
 		tasks = append(tasks, task)
 	}
-	for result := range do(tasks, num) {
+	for result := range checkVul(tasks, ticker) {
 		utils.Green("%s %s", result.Req.URL, result.Poc.Name)
 	}
 }
 
-func checkPoc(oReq *http.Request, p *Poc) (bool, error) {
+func executePoc(oReq *http.Request, p *Poc) (bool, error) {
 	utils.Debug(oReq.URL.String(), p.Name)
 	c := NewEnvOption()
 	c.UpdateCompileOptions(p.Set)

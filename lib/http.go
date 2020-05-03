@@ -16,17 +16,24 @@ import (
 var (
 	client           *http.Client
 	clientNoRedirect *http.Client
+	dialTimout       = 5 * time.Second
+	keepAlive        = 15 * time.Second
 )
 
 func InitHttpClient(ThreadsNum int, DownProxy string, Timeout time.Duration) error {
+	dialer := &net.Dialer{
+		Timeout:   dialTimout,
+		KeepAlive: keepAlive,
+	}
+
 	tr := &http.Transport{
-		MaxIdleConns:        0,
+		DialContext: dialer.DialContext,
+		//MaxConnsPerHost:     0,
+		MaxIdleConns:        1000,
 		MaxIdleConnsPerHost: ThreadsNum * 2,
+		IdleConnTimeout:     keepAlive,
 		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-		DialContext: (&net.Dialer{
-			Timeout:   15 * time.Second,
-			KeepAlive: 15 * time.Second,
-		}).DialContext,
+		TLSHandshakeTimeout: 5 * time.Second,
 	}
 	if DownProxy != "" {
 		u, err := url.Parse(DownProxy)
@@ -35,13 +42,14 @@ func InitHttpClient(ThreadsNum int, DownProxy string, Timeout time.Duration) err
 		}
 		tr.Proxy = http.ProxyURL(u)
 	}
+
 	client = &http.Client{
 		Transport: tr,
-		Timeout:   Timeout * time.Second,
+		Timeout:   Timeout,
 	}
 	clientNoRedirect = &http.Client{
 		Transport: tr,
-		Timeout:   Timeout * time.Second,
+		Timeout:   Timeout,
 	}
 	clientNoRedirect.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		return http.ErrUseLastResponse
@@ -64,6 +72,9 @@ func DoRequest(req *http.Request, redirect bool) (*Response, error) {
 		oResp, err = client.Do(req)
 	} else {
 		oResp, err = clientNoRedirect.Do(req)
+	}
+	if oResp != nil {
+		defer oResp.Body.Close()
 	}
 	if err != nil {
 		return nil, err
@@ -150,7 +161,7 @@ func getRespBody(oResp *http.Response) ([]byte, error) {
 			//utils.Logger.Error(err)
 			return nil, err
 		}
-		defer oResp.Body.Close()
+		//defer oResp.Body.Close()
 		body = raw
 	}
 	return body, nil

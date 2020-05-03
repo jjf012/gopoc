@@ -12,6 +12,7 @@ require (
 	github.com/onsi/gomega v1.9.0 // indirect
 	github.com/sirupsen/logrus v1.5.0
 	github.com/thoas/go-funk v0.6.0
+	github.com/urfave/cli/v2 v2.2.0
 	github.com/x-cray/logrus-prefixed-formatter v0.5.2
 	google.golang.org/genproto v0.0.0-20200305110556-506484158171
 	gopkg.in/yaml.v2 v2.2.8
