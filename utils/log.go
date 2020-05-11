@@ -13,7 +13,7 @@ var logger *logrus.Logger
 func InitLog(debug, verbose bool) {
 	logger = &logrus.Logger{
 		Out:   os.Stdout,
-		Level: logrus.PanicLevel,
+		Level: logrus.ErrorLevel,
 		Formatter: &prefixed.TextFormatter{
 			ForceColors:     true,
 			ForceFormatting: true,

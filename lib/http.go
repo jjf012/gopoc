@@ -86,7 +86,7 @@ func DoRequest(req *http.Request, redirect bool) (*Response, error) {
 	return resp, err
 }
 
-func parseUrl(u *url.URL) *UrlType {
+func ParseUrl(u *url.URL) *UrlType {
 	nu := &UrlType{}
 	nu.Scheme = u.Scheme
 	nu.Domain = u.Hostname()
@@ -101,7 +101,7 @@ func parseUrl(u *url.URL) *UrlType {
 func ParseRequest(oReq *http.Request) (*Request, error) {
 	req := &Request{}
 	req.Method = oReq.Method
-	req.Url = parseUrl(oReq.URL)
+	req.Url = ParseUrl(oReq.URL)
 	header := make(map[string]string)
 	for k := range oReq.Header {
 		header[k] = oReq.Header.Get(k)
@@ -124,7 +124,7 @@ func ParseResponse(oResp *http.Response) (*Response, error) {
 	var resp Response
 	header := make(map[string]string)
 	resp.Status = int32(oResp.StatusCode)
-	resp.Url = parseUrl(oResp.Request.URL)
+	resp.Url = ParseUrl(oResp.Request.URL)
 	for k := range oResp.Header {
 		header[k] = oResp.Header.Get(k)
 	}

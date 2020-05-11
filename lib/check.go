@@ -3,7 +3,9 @@ package lib
 import (
 	"fmt"
 	"gopoc/utils"
+	"math/rand"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -11,9 +13,23 @@ import (
 	"time"
 )
 
+var (
+	ceyeApi    string
+	ceyeDomain string
+)
+
 type Task struct {
 	Req *http.Request
 	Poc *Poc
+}
+
+func InitCeyeApi(api, domain string) bool {
+	if api == "" || domain == "" || !strings.HasSuffix(domain, ".ceye.io") {
+		return false
+	}
+	ceyeApi = api
+	ceyeDomain = domain
+	return true
 }
 
 func checkVul(tasks []Task, ticker *time.Ticker) <-chan Task {
@@ -161,24 +177,27 @@ func executePoc(oReq *http.Request, p *Poc) (bool, error) {
 	variableMap["request"] = req
 
 	// 现在假定set中payload作为最后产出，那么先排序解析其他的自定义变量，更新map[string]interface{}后再来解析payload
-	newSet := make(map[string]string)
 	keys := make([]string, 0)
 	for k := range p.Set {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
+
 	for _, k := range keys {
-		newSet[k] = p.Set[k]
-	}
-	for k, expression := range newSet {
+		expression := p.Set[k]
 		if k != "payload" {
-			out, err := Calculate(env, expression, variableMap)
+			if expression == "newReverse()" {
+				variableMap[k] = newReverse()
+				continue
+			}
+			out, err := Evaluate(env, expression, variableMap)
 			if err != nil {
+				utils.Error(err)
 				continue
 			}
 			switch value := out.Value().(type) {
 			case *UrlType:
-				variableMap[k] = ParseUrlType(value)
+				variableMap[k] = UrlTypeToString(value)
 			case int64:
 				variableMap[k] = int(value)
 			default:
@@ -188,7 +207,7 @@ func executePoc(oReq *http.Request, p *Poc) (bool, error) {
 	}
 
 	if p.Set["payload"] != "" {
-		out, err := Calculate(env, p.Set["payload"], variableMap)
+		out, err := Evaluate(env, p.Set["payload"], variableMap)
 		if err != nil {
 			return false, err
 		}
@@ -215,6 +234,10 @@ func executePoc(oReq *http.Request, p *Poc) (bool, error) {
 		} else {
 			req.Url.Path = rule.Path
 		}
+		// 某些poc没有区分path和query，需要处理
+		req.Url.Path = strings.ReplaceAll(req.Url.Path, " ", "%20")
+		req.Url.Path = strings.ReplaceAll(req.Url.Path, "+", "%20")
+
 		newRequest, _ := http.NewRequest(rule.Method, fmt.Sprintf("%s://%s%s", req.Url.Scheme, req.Url.Host, req.Url.Path), strings.NewReader(rule.Body))
 		newRequest.Header = oReq.Header.Clone()
 		for k, v := range rule.Headers {
@@ -224,14 +247,13 @@ func executePoc(oReq *http.Request, p *Poc) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		//parseResponse(resp, variableMap)
 		variableMap["response"] = resp
 
+		// 先判断响应页面是否匹配search规则
 		if rule.Search != "" {
 			result := doSearch(strings.TrimSpace(rule.Search), string(resp.Body))
 			if result != nil && len(result) > 0 { // 正则匹配成功
 				for k, v := range result {
-					//fmt.Println(k, v)
 					variableMap[k] = v
 				}
 				//return false, nil
@@ -240,7 +262,7 @@ func executePoc(oReq *http.Request, p *Poc) (bool, error) {
 			}
 		}
 
-		out, err := Calculate(env, rule.Expression, variableMap)
+		out, err := Evaluate(env, rule.Expression, variableMap)
 		if err != nil {
 			return false, err
 		}
@@ -271,4 +293,21 @@ func doSearch(re string, body string) map[string]string {
 		return paramsMap
 	}
 	return nil
+}
+
+func newReverse() *Reverse {
+	letters := "1234567890abcdefghijklmnopqrstuvwxyz"
+	randSource := rand.New(rand.NewSource(time.Now().Unix()))
+	sub := utils.RandomStr(randSource, letters, 8)
+	if ceyeDomain == "" {
+		return &Reverse{}
+	}
+	urlStr := fmt.Sprintf("http://%s.%s", sub, ceyeDomain)
+	u, _ := url.Parse(urlStr)
+	return &Reverse{
+		Url:                ParseUrl(u),
+		Domain:             u.Hostname(),
+		Ip:                 "",
+		IsDomainNameServer: false,
+	}
 }

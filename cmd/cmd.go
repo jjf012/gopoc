@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -27,14 +28,19 @@ var (
 	cookie     string
 	verbose    bool
 	debug      bool
+	forceSSL   bool
+	apiKey     string
+	ceyeDomain string
 )
 
 func Execute() {
 	app := &cli.App{
-		Name:    "go poc",
-		Usage:   "A golang poc scanner",
-		Version: "0.0.3",
+		Name:    "go poc scanner",
+		Usage:   "A poc framework written in golang",
+		Version: "1.0.0",
 		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "apiKey", Aliases: []string{"k"}, Destination: &apiKey, Value: "", Usage: "ceye.io api key"},
+			&cli.StringFlag{Name: "domain", Destination: &ceyeDomain, Value: "", Usage: "ceye.io subdomain"},
 			&cli.BoolFlag{Name: "debug", Aliases: []string{"d"}, Destination: &debug, Value: false, Usage: "log level debug"},
 			&cli.BoolFlag{Name: "info", Aliases: []string{"i"}, Destination: &verbose, Value: false, Usage: "log level info"},
 			&cli.StringFlag{Name: "poc-name", Aliases: []string{"p"}, Destination: &pocName, Value: "", Usage: "single poc `NAME`"},
@@ -42,9 +48,10 @@ func Execute() {
 			&cli.StringFlag{Name: "target", Aliases: []string{"t"}, Destination: &target, Value: "", Usage: "target to scan"},
 			&cli.StringFlag{Name: "targetFile", Aliases: []string{"l"}, Destination: &targetFile, Value: "", Usage: "load targets from `FILE`"},
 			&cli.StringFlag{Name: "raw", Aliases: []string{"r"}, Destination: &rawFile, Value: "", Usage: "request raw `File`"},
-			&cli.IntFlag{Name: "num", Value: 10, Destination: &num, Usage: "threads num"},
-			&cli.IntFlag{Name: "rate", Value: 100, Destination: &rate, Usage: "scan rate"},
-			&cli.DurationFlag{Name: "timeout", Destination: &timeout, Value: 10 * time.Second, Usage: "scan timeout"},
+			&cli.BoolFlag{Name: "ssl", Destination: &forceSSL, Value: false, Usage: "force usage of SSL/HTTPS for raw"},
+			&cli.IntFlag{Name: "num", Value: 10, Destination: &num, Usage: "threads `NUM`"},
+			&cli.IntFlag{Name: "rate", Value: 100, Destination: &rate, Usage: "scan rate, request per second"},
+			&cli.DurationFlag{Name: "timeout", Destination: &timeout, Value: 10 * time.Second, Usage: "scan `TIMEOUT`"},
 			&cli.StringFlag{Name: "cookie", Destination: &cookie, Value: "", Usage: "http cookie header"},
 			&cli.StringFlag{Name: "proxy", Destination: &proxy, Value: "", Usage: "http proxy", DefaultText: "http://127.0.0.1:8080"},
 		},
@@ -54,8 +61,15 @@ func Execute() {
 				return err
 			}
 			utils.InitLog(debug, verbose)
+			if !lib.InitCeyeApi(apiKey, ceyeDomain) {
+				utils.Warning("no api")
+			}
 			switch {
 			case target != "":
+				if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
+				} else {
+					target = "http://" + target
+				}
 				req, err := http.NewRequest("GET", target, nil)
 				if err != nil {
 					return err
@@ -86,6 +100,15 @@ func Execute() {
 				if err != nil {
 					return err
 				}
+				if !req.URL.IsAbs() {
+					scheme := "http"
+					if forceSSL {
+						scheme = "https"
+					}
+					req.URL.Scheme = scheme
+					req.URL.Host = req.Host
+				}
+
 				if pocName != "" {
 					if poc := lib.CheckSinglePoc(req, pocName); poc != nil {
 						utils.Green("%v, %s", target, poc.Name)

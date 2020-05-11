@@ -1,5 +1,9 @@
 name: poc-yaml-example-com
 set:
+  reverse: newReverse()
+  reverseURL: reverse.url
+  reverseURLHost: reverse.url.host
+  reverseDomain: reverse.domain
   r1: randomInt(40000, 44800)
   r2: randomInt(40000, 44800)
   referer: request.url
@@ -13,8 +17,10 @@ rules:
     headers:
       Referer: '{{referer}}'
       Domain: '{{host}}'
+      Reverse: '{{reverseURL}}'
     path: "/objects/getImage.php"
-    expression: "true"
+    expression: |
+      reverse.wait(3)
     body: |
       {{payload}}
     search: |
