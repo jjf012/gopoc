@@ -164,6 +164,10 @@ func NewEnvOption() CustomLib {
 				decls.NewInstanceOverload("reverse_wait_int",
 					[]*exprpb.Type{decls.Any, decls.Int},
 					decls.Bool)),
+			decls.NewFunction("icontains",
+				decls.NewInstanceOverload("icontains_string",
+					[]*exprpb.Type{decls.String, decls.String},
+					decls.Bool)),
 		),
 	}
 	c.programOptions = []cel.ProgramOption{
@@ -369,6 +373,21 @@ func NewEnvOption() CustomLib {
 						return types.ValOrErr(rhs, "unexpected type '%v' passed to 'wait'", rhs.Type())
 					}
 					return types.Bool(reverseCheck(reverse, timeout))
+				},
+			},
+			&functions.Overload{
+				Operator: "icontains_string",
+				Binary: func(lhs ref.Val, rhs ref.Val) ref.Val {
+					v1, ok := lhs.(types.String)
+					if !ok {
+						return types.ValOrErr(lhs, "unexpected type '%v' passed to bcontains", lhs.Type())
+					}
+					v2, ok := rhs.(types.String)
+					if !ok {
+						return types.ValOrErr(rhs, "unexpected type '%v' passed to bcontains", rhs.Type())
+					}
+					// 不区分大小写包含
+					return types.Bool(strings.Contains(strings.ToLower(string(v1)), strings.ToLower(string(v2))))
 				},
 			},
 		),
